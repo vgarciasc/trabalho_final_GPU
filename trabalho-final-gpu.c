@@ -28,14 +28,13 @@ using myClock = std::chrono::high_resolution_clock;
       fprintf(stderr,"Erro no arquivo '%s', linha %i: %s.\n",__FILE__, __LINE__,cudaGetErrorString(err)); \
       exit(EXIT_FAILURE); } } 
 
-__global__ void calculate(unsigned long seed, curandState *state, double* results, 
+__global__ void calculate(unsigned long seed, curandState *state, double* results, int result_size,
     double initial_velocity, double timestep, double gravity) {
 
     int id = threadIdx.x;
-    results[id] = -1;
-
     curand_init(seed, id, 0, &state[id]);
 
+    //Usar a mesma Seed pros dois pode corromper nossas amostras?
     double phi = (curand_normal(&state[id]) * 5 + 10) * (PI / 180.0);
     double theta = (curand_normal(&state[id]) * 3 + 15) * (PI / 180.0);
 
@@ -94,16 +93,17 @@ __global__ void calculate(unsigned long seed, curandState *state, double* result
         if (X_1[1] > 20.0) {
             double proportion = ((20.0 - X[1]) / (X_1[1] - X[1]));
 
-            X[0] = X[0] + (X_1[0] - X[0]) * proportion;
-            X[1] = X[1] + (X_1[1] - X[1]) * proportion;
-            X[2] = X[2] + (X_1[2] - X[2]) * proportion;
-            X[3] = X[3] + (X_1[3] - X[3]) * proportion;
-            X[4] = X[4] + (X_1[4] - X[4]) * proportion;
-            X[5] = X[5] + (X_1[5] - X[5]) * proportion;
+            results[id * result_size] = X[0] + (X_1[0] - X[0]) * proportion;
+            results[id * result_size + 1] = X[1] + (X_1[1] - X[1]) * proportion;
+            results[id * result_size + 2] = X[2] + (X_1[2] - X[2]) * proportion;
+            results[id * result_size + 3] = X[3] + (X_1[3] - X[3]) * proportion;
+            results[id * result_size + 4] = X[4] + (X_1[4] - X[4]) * proportion;
+            results[id * result_size + 5] = X[5] + (X_1[5] - X[5]) * proportion;
 
             double stoptime = ((i-1) * timestep + (proportion) * timestep);
-            results[id] = stoptime;
+            results[id * result_size + 6] = stoptime;
 
+            //talvez ela devesse continuar calculando, pra ficar junto das irmãs?
             break;
         }
 
@@ -124,16 +124,17 @@ __global__ void calculate(unsigned long seed, curandState *state, double* result
     }
 }
 
-//funcao principal
 int main(int argc, char** argv) {
 
     int n_blocos = 1;
     int n_threads = 8;
+    int result_size = 7;
+    int n_bytes = sizeof(double) * n_threads * result_size;
 
     double* h_results;
     double* d_results;
 
-    h_results = (double*) malloc(sizeof(double) * n_threads);
+    h_results = (double*) malloc(n_bytes);
 
     //Initialization
     double initial_velocity = 25.0;
@@ -149,19 +150,28 @@ int main(int argc, char** argv) {
     // double object_angular_velocity = 6.28;
     // double proportionality_constant = 1;
 
-    int n_bytes = sizeof(double) * n_threads;
     CUDA_SAFE_CALL(cudaMalloc((void**) &d_results, n_bytes));
 
     curandState *devStates;
     CUDA_SAFE_CALL(cudaMalloc((void**) &devStates, n_blocos * n_threads * sizeof(curandState)));
 
-    calculate <<<n_blocos, n_threads>>>(time(NULL), devStates, d_results, initial_velocity, timestep, gravity);
+    calculate <<<n_blocos, n_threads>>>(time(NULL), devStates, d_results, result_size, initial_velocity, timestep, gravity);
     CUDA_SAFE_CALL(cudaGetLastError());
 
-    CUDA_SAFE_CALL(cudaMemcpy(h_results, d_results, n_bytes, cudaMemcpyDeviceToHost)) 
+    CUDA_SAFE_CALL(cudaMemcpy(h_results, d_results, n_bytes, cudaMemcpyDeviceToHost));
 
     for (int i = 0; i < n_threads; i++) {
-        printf("RESULT[%d]: %lf\n", i, h_results[i]);
+        printf("RESULT[%d]: [\n", i);
+
+        printf(" time: %lf,\n", h_results[i * result_size + 6]);
+        printf(" x*: %lf,\n", h_results[i * result_size + 0]);
+        printf(" y*: %lf,\n", h_results[i * result_size + 1]);
+        printf(" z*: %lf,\n", h_results[i * result_size + 2]);
+        printf(" vx*: %lf,\n", h_results[i * result_size + 3]);
+        printf(" vy*: %lf,\n", h_results[i * result_size + 4]);
+        printf(" vz*: %lf,\n", h_results[i * result_size + 5]);
+
+        printf("]\n");
     }
 
 	return 0;
