@@ -2,6 +2,8 @@
 
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
+#include <curand.h>
+#include <curand_kernel.h>
 
 #include <math.h>
 #include <stdio.h>
@@ -26,61 +28,47 @@ using myClock = std::chrono::high_resolution_clock;
       fprintf(stderr,"Erro no arquivo '%s', linha %i: %s.\n",__FILE__, __LINE__,cudaGetErrorString(err)); \
       exit(EXIT_FAILURE); } } 
 
-double to_radians(double degrees) {
-    return degrees * (PI / 180.0);
-}
+__global__ void calculate(unsigned long seed, curandState *state, double* results, 
+    double initial_velocity, double timestep, double gravity) {
 
-void print_X(double* X) {
-    printf("X: [\n x: %lf,\n y: %lf,\n z: %lf,\n vx: %lf,\n vy: %lf,\n vz: %lf\n]\n", X[0], X[1], X[2], X[3], X[4], X[5]);
-}
+    int id = threadIdx.x;
+    results[id] = -1;
 
-//funcao principal
-int main(int argc, char** argv) {
+    curand_init(seed, id, 0, &state[id]);
 
-    //Initialization
-    double initial_velocity;
-    double theta;
-    double phi;
-    double timestep = 0.1;
-    double gravity = 9.81;
+    double phi = (curand_normal(&state[id]) * 5 + 10) * (PI / 180.0);
+    double theta = (curand_normal(&state[id]) * 3 + 15) * (PI / 180.0);
+
+    double X[6];
+    double X_prime[6];
+    double X_1_E[6];
+    double X_1[6];
+
+    double init_vx, init_vy, init_vz;
+    init_vx = initial_velocity * cos(theta) * sin(phi);
+    init_vy = initial_velocity * cos(theta) * cos(phi);
+    init_vz = initial_velocity * sin(theta);
     
-    sscanf(argv[1], "%lf", &initial_velocity);
-    sscanf(argv[2], "%lf", &theta);
-    sscanf(argv[3], "%lf", &phi);
+    double init_dvx, init_dvy, init_dvz;
+    init_dvx = 0;
+    init_dvy = 0;
+    init_dvz = -gravity;
 
-    theta = to_radians(theta);
-    phi = to_radians(phi);
-    
-    double* X;
-    X = (double*) malloc(sizeof(double) * 6);
-    
     X[0] = 0;
     X[1] = 0;
     X[2] = 0;
-    X[3] = initial_velocity * cos(theta) * sin(phi);
-    X[4] = initial_velocity * cos(theta) * cos(phi);
-    X[5] = initial_velocity * sin(theta);
+    X[3] = init_vx;
+    X[4] = init_vy;
+    X[5] = init_vz;
 
-    double* X_prime;
-    X_prime = (double*) malloc(sizeof(double) * 6);
-    
-    X_prime[0] = X[3];
-    X_prime[1] = X[4];
-    X_prime[2] = X[5];
-    X_prime[3] = 0;
-    X_prime[4] = 0;
-    X_prime[5] = -gravity;
+    X_prime[0] = init_vx;
+    X_prime[1] = init_vy;
+    X_prime[2] = init_vz;
+    X_prime[3] = init_dvx;
+    X_prime[4] = init_dvy;
+    X_prime[5] = init_dvz;
 
-    double* X_1_E;
-    X_1_E = (double*) malloc(sizeof(double) * 6);
-
-    double* X_1;
-    X_1 = (double*) malloc(sizeof(double) * 6);
-
-    printf("TIME START:\n");
-    print_X(X);
-
-    for (int i = 0; i < 15; i++) {
+    for (int i = 0; i < 50; i++) {
         //Calculando passos
         X_1_E[0] = X[0] + (timestep * X_prime[0]);
         X_1_E[1] = X[1] + (timestep * X_prime[1]);
@@ -104,15 +92,7 @@ int main(int argc, char** argv) {
         X_1[5] = X[5] + (timestep * ((X_prime[5] + X_1_E[5]) / 2.0));
 
         if (X_1[1] > 20.0) {
-            printf("==== PASSED GOAL! ====\n");
-            printf("> TIME %lf:\n", ((i-1) * timestep));
-            print_X(X);
-            printf("> TIME %lf:\n", (i * timestep));
-            print_X(X_1);
-
-            printf("> INTERPOLATING...\n");
             double proportion = ((20.0 - X[1]) / (X_1[1] - X[1]));
-            printf("> PROPORTION: %lf\n", proportion);
 
             X[0] = X[0] + (X_1[0] - X[0]) * proportion;
             X[1] = X[1] + (X_1[1] - X[1]) * proportion;
@@ -121,8 +101,8 @@ int main(int argc, char** argv) {
             X[4] = X[4] + (X_1[4] - X[4]) * proportion;
             X[5] = X[5] + (X_1[5] - X[5]) * proportion;
 
-            printf("> TIME %lf:\n", ((i-1) * timestep + (proportion) * timestep));
-            print_X(X);
+            double stoptime = ((i-1) * timestep + (proportion) * timestep);
+            results[id] = stoptime;
 
             break;
         }
@@ -138,12 +118,50 @@ int main(int argc, char** argv) {
         X_prime[0] = X[3];
         X_prime[1] = X[4];
         X_prime[2] = X[5];
-        X_prime[3] = 0;
-        X_prime[4] = 0;
-        X_prime[5] = -gravity;
+        X_prime[3] = init_dvx;
+        X_prime[4] = init_dvy;
+        X_prime[5] = init_dvz;
+    }
+}
 
-        // printf("TIME %lf:\n", (i * timestep));
-        // print_X(X);
+//funcao principal
+int main(int argc, char** argv) {
+
+    int n_blocos = 1;
+    int n_threads = 8;
+
+    double* h_results;
+    double* d_results;
+
+    h_results = (double*) malloc(sizeof(double) * n_threads);
+
+    //Initialization
+    double initial_velocity = 25.0;
+    double timestep = 0.1;
+    double gravity = 9.81;
+    // double object_mass = 0.425;
+    // double object_radius = 0.111;
+    // double air_density = 1.2;
+    // double drag_coeff_a = 0.214;
+    // double drag_coeff_b = 0.283;
+    // double drag_coeff_vc = 7.5;
+    // double drag_coeff_vs = 0.707;
+    // double object_angular_velocity = 6.28;
+    // double proportionality_constant = 1;
+
+    int n_bytes = sizeof(double) * n_threads;
+    CUDA_SAFE_CALL(cudaMalloc((void**) &d_results, n_bytes));
+
+    curandState *devStates;
+    CUDA_SAFE_CALL(cudaMalloc((void**) &devStates, n_blocos * n_threads * sizeof(curandState)));
+
+    calculate <<<n_blocos, n_threads>>>(time(NULL), devStates, d_results, initial_velocity, timestep, gravity);
+    CUDA_SAFE_CALL(cudaGetLastError());
+
+    CUDA_SAFE_CALL(cudaMemcpy(h_results, d_results, n_bytes, cudaMemcpyDeviceToHost)) 
+
+    for (int i = 0; i < n_threads; i++) {
+        printf("RESULT[%d]: %lf\n", i, h_results[i]);
     }
 
 	return 0;
