@@ -28,22 +28,22 @@ using myClock = std::chrono::high_resolution_clock;
       fprintf(stderr,"Erro no arquivo '%s', linha %i: %s.\n",__FILE__, __LINE__,cudaGetErrorString(err)); \
       exit(EXIT_FAILURE); } } 
 
-__device__ void differentiate_X(double* X, double* X_prime, double drag_coeff, double drag_coeff_a, double drag_coeff_b, 
+__device__ void differentiate_X(double* X_src, double* X_dst, double drag_coeff, double drag_coeff_a, double drag_coeff_b, 
     double drag_coeff_vc, double drag_coeff_vs, double magnus_coeff, double gravity) {
 
-    double vx = X[3];
-    double vy = X[4];
-    double vz = X[5];
+    double vx = X_src[3];
+    double vy = X_src[4];
+    double vz = X_src[5];
     double velocity = sqrt(vx * vx + vy * vy + vz * vz);
     double sqrt_vx_vy = sqrt(vx * vx + vy * vy);
     double drag_coeff_v = drag_coeff_a + (drag_coeff_b / (1 + exp(((velocity - drag_coeff_vc) / drag_coeff_vs))));
 
-    X_prime[0] = X[3];
-    X_prime[1] = X[4];
-    X_prime[2] = X[5];
-    X_prime[3] = - (drag_coeff) * ((drag_coeff_v * velocity * vx) + ((magnus_coeff * velocity * vy) / (sqrt_vx_vy)));
-    X_prime[4] = - (drag_coeff) * ((drag_coeff_v * velocity * vy) - ((magnus_coeff * velocity * vx) / (sqrt_vx_vy)));
-    X_prime[5] = - (drag_coeff) * (drag_coeff_v * velocity * vz) - gravity;
+    X_dst[0] = vx;
+    X_dst[1] = vy;
+    X_dst[2] = vz;
+    X_dst[3] = - (drag_coeff) * ((drag_coeff_v * velocity * vx) + ((magnus_coeff * velocity * vy) / (sqrt_vx_vy)));
+    X_dst[4] = - (drag_coeff) * ((drag_coeff_v * velocity * vy) - ((magnus_coeff * velocity * vx) / (sqrt_vx_vy)));
+    X_dst[5] = - (drag_coeff) * (drag_coeff_v * velocity * vz) - gravity;
 }
 
 __global__ void calculate(unsigned long seed, curandState *state, double* results, int result_size,
@@ -61,42 +61,23 @@ __global__ void calculate(unsigned long seed, curandState *state, double* result
     double X[6];
     double X_prime[6];
     double X_1_E[6];
-    double X_1[6];
 
-    double vx, vy, vz;
-    vx = velocity * cos(theta) * sin(phi);
-    vy = velocity * cos(theta) * cos(phi);
-    vz = velocity * sin(theta);
-    double sqrt_vx_vy = sqrt(vx * vx + vy * vy);
-
-    //X = (x, y, z, vx, vy, vz)
+    //X = (0, 0, 0, init_vx, init_vy, init_vz)
     X[0] = 0;
     X[1] = 0;
     X[2] = 0;
-    X[3] = vx;
-    X[4] = vy;
-    X[5] = vz;
+    X[3] = velocity * cos(theta) * sin(phi);
+    X[4] = velocity * cos(theta) * cos(phi);
+    X[5] = velocity * sin(theta);
 
     //drag_coeff_v = Cr(v) = a + b/(1 + exp((v - vc) / vs))
     double drag_coeff_v = drag_coeff_a + (drag_coeff_b / (1 + exp(((velocity - drag_coeff_vc) / drag_coeff_vs))));
     //magnus_coeff = Cm * r * w
     double magnus_coeff = proportionality_constant * object_angular_velocity * object_radius;
 
-    //X' = (vx, vy, vz, dvx, dvy, dvz)
-    differentiate_X(X, X_prime, drag_coeff, drag_coeff_a, drag_coeff_b, drag_coeff_vc, drag_coeff_vs, magnus_coeff, gravity);
-
     for (int i = 0; i < 500; i++) {
-        // if (id == 0) {
-        //     printf(" time: %lf,\n", i * timestep);
-        //     printf(" x*: %lf,\n", X[0]);
-        //     printf(" y*: %lf,\n", X[1]);
-        //     printf(" z*: %lf,\n", X[2]);
-        //     printf(" vx*: %lf,\n", X[3]);
-        //     printf(" vy*: %lf,\n", X[4]);
-        //     printf(" vz*: %lf,\n\n\n", X[5]);
-        // }
-
-        //=== Calculando passos
+        //X' = (vx, vy, vz, dvx, dvy, dvz)
+        differentiate_X(X, X_prime, drag_coeff, drag_coeff_a, drag_coeff_b, drag_coeff_vc, drag_coeff_vs, magnus_coeff, gravity);
 
         //Xe(n+1) = X(n) + Δt*X'(n)
         X_1_E[0] = X[0] + (timestep * X_prime[0]);
@@ -110,22 +91,25 @@ __global__ void calculate(unsigned long seed, curandState *state, double* result
         differentiate_X(X_1_E, X_1_E, drag_coeff, drag_coeff_a, drag_coeff_b, drag_coeff_vc, drag_coeff_vs, magnus_coeff, gravity);
 
         //X(n+1) = X + (Δt/2)*(X'(n) + X'e(n+1))
-        X_1[0] = X[0] + (timestep * ((X_prime[0] + X_1_E[0]) / 2.0));
-        X_1[1] = X[1] + (timestep * ((X_prime[1] + X_1_E[1]) / 2.0));
-        X_1[2] = X[2] + (timestep * ((X_prime[2] + X_1_E[2]) / 2.0));
-        X_1[3] = X[3] + (timestep * ((X_prime[3] + X_1_E[3]) / 2.0));
-        X_1[4] = X[4] + (timestep * ((X_prime[4] + X_1_E[4]) / 2.0));
-        X_1[5] = X[5] + (timestep * ((X_prime[5] + X_1_E[5]) / 2.0));
+        X[0] += (timestep * ((X_prime[0] + X_1_E[0]) / 2.0));
+        X[1] += (timestep * ((X_prime[1] + X_1_E[1]) / 2.0));
+        X[2] += (timestep * ((X_prime[2] + X_1_E[2]) / 2.0));
+        X[3] += (timestep * ((X_prime[3] + X_1_E[3]) / 2.0));
+        X[4] += (timestep * ((X_prime[4] + X_1_E[4]) / 2.0));
+        X[5] += (timestep * ((X_prime[5] + X_1_E[5]) / 2.0));
 
-        if (X_1[1] > 20.0) {
-            double proportion = ((20.0 - X[1]) / (X_1[1] - X[1]));
+        if (X[1] > 20.0) {
+            //=== Interpolando resultados
+            double end_value = X[1];
+            double previous_value = X[1] - (timestep * ((X_prime[1] + X_1_E[1]) / 2.0));
+            double proportion = 1 - (end_value - 20) / (end_value - previous_value);
 
-            results[id * result_size + 0] = X[0] + (X_1[0] - X[0]) * proportion;
-            results[id * result_size + 1] = X[1] + (X_1[1] - X[1]) * proportion;
-            results[id * result_size + 2] = X[2] + (X_1[2] - X[2]) * proportion;
-            results[id * result_size + 3] = X[3] + (X_1[3] - X[3]) * proportion;
-            results[id * result_size + 4] = X[4] + (X_1[4] - X[4]) * proportion;
-            results[id * result_size + 5] = X[5] + (X_1[5] - X[5]) * proportion;
+            results[id * result_size + 0] = X[0] + ((timestep * ((X_prime[0] + X_1_E[0]) / 2.0))) * (proportion - 1);
+            results[id * result_size + 1] = X[1] + ((timestep * ((X_prime[1] + X_1_E[1]) / 2.0))) * (proportion - 1);
+            results[id * result_size + 2] = X[2] + ((timestep * ((X_prime[2] + X_1_E[2]) / 2.0))) * (proportion - 1);
+            results[id * result_size + 3] = X[3] + ((timestep * ((X_prime[3] + X_1_E[3]) / 2.0))) * (proportion - 1);
+            results[id * result_size + 4] = X[4] + ((timestep * ((X_prime[4] + X_1_E[4]) / 2.0))) * (proportion - 1);
+            results[id * result_size + 5] = X[5] + ((timestep * ((X_prime[5] + X_1_E[5]) / 2.0))) * (proportion - 1);
 
             double stoptime = ((i-1) * timestep + (proportion) * timestep);
             results[id * result_size + 6] = stoptime;
@@ -133,18 +117,6 @@ __global__ void calculate(unsigned long seed, curandState *state, double* result
             //talvez ela devesse continuar calculando, pra ficar junto das irmãs?
             break;
         }
-
-        //=== Deixando pronto para próxima iteração
-
-        //X(n) <- X(n+1)
-        X[0] = X_1[0];
-        X[1] = X_1[1];
-        X[2] = X_1[2];
-        X[3] = X_1[3];
-        X[4] = X_1[4];
-        X[5] = X_1[5];
-        
-        differentiate_X(X, X_prime, drag_coeff, drag_coeff_a, drag_coeff_b, drag_coeff_vc, drag_coeff_vs, magnus_coeff, gravity);
     }
 }
 
