@@ -11,6 +11,7 @@
 #include <chrono>
 #include <fstream>
 #include <iostream>
+#include <sys/time.h>
 
 using std::chrono::duration;
 using std::cout;
@@ -27,6 +28,13 @@ using myClock = std::chrono::high_resolution_clock;
    if(err != cudaSuccess) {    \
       fprintf(stderr,"Erro no arquivo '%s', linha %i: %s.\n",__FILE__, __LINE__,cudaGetErrorString(err)); \
       exit(EXIT_FAILURE); } } 
+
+//argumento deve ser double
+#define GET_TIME(now) { \
+   struct timespec time; \
+   clock_gettime(CLOCK_MONOTONIC_RAW, &time); \
+   now = time.tv_sec + time.tv_nsec/1000000000.0; \
+}
 
 __device__ void differentiate_X(double* X_src, double* X_dst, double drag_coeff, double drag_coeff_a, double drag_coeff_b, 
     double drag_coeff_vc, double drag_coeff_vs, double magnus_coeff, double gravity) {
@@ -129,8 +137,11 @@ int main(int argc, char** argv) {
 
     double* h_results;
     double* d_results;
-
     h_results = (double*) malloc(n_bytes);
+
+    double inicio, fim;
+    double tempo_media;
+    cudaEvent_t start, stop;
 
     //Initialization
     double initial_velocity = 25.0;
@@ -157,10 +168,17 @@ int main(int argc, char** argv) {
     curandState *devStates;
     CUDA_SAFE_CALL(cudaMalloc((void**) &devStates, n_blocos * n_threads * sizeof(curandState)));
 
+    CUDA_SAFE_CALL(cudaEventCreate(&start));
+    CUDA_SAFE_CALL(cudaEventCreate(&stop));
+    CUDA_SAFE_CALL(cudaEventRecord(start));
     calculate<<<n_blocos, n_threads>>>(time(NULL), devStates, d_results, result_size, initial_velocity, 
         timestep, gravity, drag_coeff, drag_coeff_a, drag_coeff_b, drag_coeff_vc, drag_coeff_vs,
         object_radius, object_angular_velocity, proportionality_constant);
     CUDA_SAFE_CALL(cudaGetLastError());
+    CUDA_SAFE_CALL(cudaEventRecord(stop));
+    CUDA_SAFE_CALL(cudaEventSynchronize(stop));
+    float delta_eventos = 0;
+    CUDA_SAFE_CALL(cudaEventElapsedTime(&delta_eventos, start, stop));
 
     CUDA_SAFE_CALL(cudaMemcpy(h_results, d_results, n_bytes, cudaMemcpyDeviceToHost));
 
@@ -168,19 +186,33 @@ int main(int argc, char** argv) {
     double x_acc = 0.0;
     double y_acc = 0.0;
     double z_acc = 0.0;
+    int goals = 0;
 
+    GET_TIME(inicio);  
     for (int i = 0; i < n_threads; i++) {
         t_acc += h_results[i * result_size + 6];
         x_acc += h_results[i * result_size + 0];
         y_acc += h_results[i * result_size + 1];
         z_acc += h_results[i * result_size + 2];
+
+        if (h_results[i * result_size + 2] > 0.0   && h_results[i * result_size + 2] < 2.44 &&
+            h_results[i * result_size + 2] > -3.66 && h_results[i * result_size + 2] < 3.66) {
+            goals++;
+        }
     }
+    GET_TIME(fim);  
+    tempo_media = fim - inicio;
 
     printf("RESULTS: \n");
     printf(" E[tf] = %lf\n", (t_acc / n_threads));
     printf(" E[x*] = %lf\n", (x_acc / n_threads));
     printf(" E[y*] = %lf\n", (y_acc / n_threads));
     printf(" E[z*] = %lf\n", (z_acc / n_threads));
+    printf(" goal rate = %lf%%\n", ((double) goals / (n_threads) * 100.0));
+
+    printf("DURATION: \n");
+    printf("  Kernel duration = %f seg \n", delta_eventos / 1000);
+    printf("  Mean calc duration = %f seg \n", tempo_media);
 
 	return 0;
 }
