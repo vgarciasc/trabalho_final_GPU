@@ -18,8 +18,6 @@ using std::cout;
 using std::endl;
 using myClock = std::chrono::high_resolution_clock;
 
-#define N 2048
-#define TAM_BLOCO 32
 #define PI 3.14159265
 
 //para checar erros chamadas Cuda
@@ -240,6 +238,10 @@ int main(int argc, char** argv) {
     printf("DURATION: \n");
     printf("  Kernel duration = %f seg \n", delta_eventos / 1000);
     printf("  Mean calc duration = %f seg \n", tempo_media);
+
+    cudaFree(devStates);
+    cudaFree(d_results);
+    free(h_results);
 
 	return 0;
 }
