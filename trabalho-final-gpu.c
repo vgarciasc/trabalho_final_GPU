@@ -59,7 +59,7 @@ __global__ void calculate(unsigned long seed, curandState *state, double* result
     double drag_coeff_a, double drag_coeff_b, double drag_coeff_vc, double drag_coeff_vs,
     double object_radius, double object_angular_velocity, double proportionality_constant) {
 
-    int id = threadIdx.x;
+    int id = blockIdx.x * blockDim.x + threadIdx.x;
     curand_init(seed, id, 0, &state[id]);
 
     //Usar a mesma Seed pros dois pode corromper nossas amostras?
@@ -130,10 +130,18 @@ __global__ void calculate(unsigned long seed, curandState *state, double* result
 
 int main(int argc, char** argv) {
 
-    int n_blocos = 1;
-    int n_threads = 8;
+    if (argc < 4) {
+        printf("Usage: <file> <n_blocos> <n_threads> <verbose? [0 | 1]>\n");
+        printf("Aborting.\n");
+        exit(0);
+    }
+
+    int n_blocos = atoi(argv[1]);
+    int n_threads = atoi(argv[2]);
+    bool verbose = atoi(argv[3]);
+
     int result_size = 7;
-    int n_bytes = sizeof(double) * n_threads * result_size;
+    int n_bytes = sizeof(double) * n_threads * n_blocos * result_size;
 
     double* h_results;
     double* d_results;
@@ -189,26 +197,45 @@ int main(int argc, char** argv) {
     int goals = 0;
 
     GET_TIME(inicio);  
-    for (int i = 0; i < n_threads; i++) {
-        t_acc += h_results[i * result_size + 6];
-        x_acc += h_results[i * result_size + 0];
-        y_acc += h_results[i * result_size + 1];
-        z_acc += h_results[i * result_size + 2];
+    for (int i = 0; i < n_blocos; i++) {
+        for (int j = 0; j < n_threads; j++) {
+            if (verbose) {
+                printf("RESULT[%d]: [\n", i * n_blocos + j);
 
-        if (h_results[i * result_size + 2] > 0.0   && h_results[i * result_size + 2] < 2.44 &&
-            h_results[i * result_size + 2] > -3.66 && h_results[i * result_size + 2] < 3.66) {
-            goals++;
+                printf(" time: %lf,\n", h_results[i * n_blocos * result_size + j * result_size + 6]);
+                printf(" x*: %lf,\n", h_results[i * n_blocos * result_size + j * result_size + 0]);
+                printf(" y*: %lf,\n", h_results[i * n_blocos * result_size + j * result_size + 1]);
+                printf(" z*: %lf,\n", h_results[i * n_blocos * result_size + j * result_size + 2]);
+                printf(" vx*: %lf,\n", h_results[i * n_blocos * result_size + j * result_size + 3]);
+                printf(" vy*: %lf,\n", h_results[i * n_blocos * result_size + j * result_size + 4]);
+                printf(" vz*: %lf,\n", h_results[i * n_blocos * result_size + j * result_size + 5]);
+            }
+
+            t_acc += h_results[i * n_blocos * result_size + j * result_size + 6];
+            x_acc += h_results[i * n_blocos * result_size + j * result_size + 0];
+            y_acc += h_results[i * n_blocos * result_size + j * result_size + 1];
+            z_acc += h_results[i * n_blocos * result_size + j * result_size + 2];
+
+            if (h_results[i * n_blocos * result_size + j * result_size + 2] > 0.0   && h_results[i * n_blocos * result_size + j * result_size + 2] < 2.44 &&
+                h_results[i * n_blocos * result_size + j * result_size + 2] > -3.66 && h_results[i * n_blocos * result_size + j * result_size + 2] < 3.66) {
+                goals++;
+                if (verbose) printf(" GOAL!\n");
+            }
+
+            if (verbose) printf("]\n");
         }
     }
     GET_TIME(fim);  
     tempo_media = fim - inicio;
 
     printf("RESULTS: \n");
-    printf("  E[tf] = %lf\n", (t_acc / n_threads));
-    printf("  E[x*] = %lf\n", (x_acc / n_threads));
-    printf("  E[y*] = %lf\n", (y_acc / n_threads));
-    printf("  E[z*] = %lf\n", (z_acc / n_threads));
-    printf("  goal rate = %lf%%\n", ((double) goals / (n_threads) * 100.0));
+    printf("  E[tf] = %lf\n", (t_acc / (n_threads * n_blocos)));
+    printf("  E[x*] = %lf\n", (x_acc / (n_threads * n_blocos)));
+    printf("  E[y*] = %lf\n", (y_acc / (n_threads * n_blocos)));
+    printf("  E[z*] = %lf\n", (z_acc / (n_threads * n_blocos)));
+    printf("  goals = %d\n", goals);
+    printf("  iterations = %d\n", (n_threads * n_blocos));
+    printf("  goal rate = %lf%%\n", ((double) goals / ((n_threads * n_blocos)) * 100.0));
 
     printf("DURATION: \n");
     printf("  Kernel duration = %f seg \n", delta_eventos / 1000);
