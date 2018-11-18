@@ -204,11 +204,11 @@ int main(int argc, char** argv) {
     tempo_media = fim - inicio;
 
     printf("RESULTS: \n");
-    printf(" E[tf] = %lf\n", (t_acc / n_threads));
-    printf(" E[x*] = %lf\n", (x_acc / n_threads));
-    printf(" E[y*] = %lf\n", (y_acc / n_threads));
-    printf(" E[z*] = %lf\n", (z_acc / n_threads));
-    printf(" goal rate = %lf%%\n", ((double) goals / (n_threads) * 100.0));
+    printf("  E[tf] = %lf\n", (t_acc / n_threads));
+    printf("  E[x*] = %lf\n", (x_acc / n_threads));
+    printf("  E[y*] = %lf\n", (y_acc / n_threads));
+    printf("  E[z*] = %lf\n", (z_acc / n_threads));
+    printf("  goal rate = %lf%%\n", ((double) goals / (n_threads) * 100.0));
 
     printf("DURATION: \n");
     printf("  Kernel duration = %f seg \n", delta_eventos / 1000);
