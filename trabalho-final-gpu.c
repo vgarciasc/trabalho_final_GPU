@@ -81,7 +81,7 @@ __global__ void calculate(unsigned long seed, curandState *state, double* result
     //magnus_coeff = Cm * r * w
     double magnus_coeff = proportionality_constant * object_angular_velocity * object_radius;
 
-    for (int i = 0; i < 500; i++) {
+    for (int i = 0; i < 1000000; i++) {
         //X' = (vx, vy, vz, dvx, dvy, dvz)
         differentiate_X(X, X_prime, drag_coeff, drag_coeff_a, drag_coeff_b, drag_coeff_vc, drag_coeff_vs, magnus_coeff, gravity);
 
@@ -128,15 +128,16 @@ __global__ void calculate(unsigned long seed, curandState *state, double* result
 
 int main(int argc, char** argv) {
 
-    if (argc < 4) {
-        printf("Usage: <file> <n_blocos> <n_threads> <verbose? [0 | 1]>\n");
+    if (argc < 5) {
+        printf("Usage: <file> <n_blocos> <n_threads> <timestep> <verbose? [0 | 1]>\n");
         printf("Aborting.\n");
         exit(0);
     }
 
     int n_blocos = atoi(argv[1]);
     int n_threads = atoi(argv[2]);
-    bool verbose = atoi(argv[3]);
+    double timestep = atof(argv[3]);
+    bool verbose = atoi(argv[4]);
 
     int result_size = 7;
     int n_bytes = sizeof(double) * n_threads * n_blocos * result_size;
@@ -151,7 +152,6 @@ int main(int argc, char** argv) {
 
     //Initialization
     double initial_velocity = 25.0;
-    double timestep = 0.1;
     double gravity = 9.81;
 
     double drag_coeff;
