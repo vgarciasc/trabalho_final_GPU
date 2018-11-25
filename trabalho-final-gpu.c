@@ -35,7 +35,7 @@ using myClock = std::chrono::high_resolution_clock;
 }
 
 __device__ void differentiate_X(double* X_src, double* X_dst, double drag_coeff, double drag_coeff_a, double drag_coeff_b, 
-    double drag_coeff_vc, double drag_coeff_vs, double magnus_coeff, double gravity) {
+    double drag_coeff_vc, double drag_coeff_vs, double magnus_coeff, double gravity, int use_extra_forces) {
 
     double vx = X_src[3];
     double vy = X_src[4];
@@ -47,13 +47,14 @@ __device__ void differentiate_X(double* X_src, double* X_dst, double drag_coeff,
     X_dst[0] = vx;
     X_dst[1] = vy;
     X_dst[2] = vz;
-    X_dst[3] = - (drag_coeff) * ((drag_coeff_v * velocity * vx) + ((magnus_coeff * velocity * vy) / (sqrt_vx_vy)));
-    X_dst[4] = - (drag_coeff) * ((drag_coeff_v * velocity * vy) - ((magnus_coeff * velocity * vx) / (sqrt_vx_vy)));
-    X_dst[5] = - (drag_coeff) * (drag_coeff_v * velocity * vz) - gravity;
+    X_dst[3] = (- (drag_coeff) * ((drag_coeff_v * velocity * vx) + ((magnus_coeff * velocity * vy) / (sqrt_vx_vy)))) * use_extra_forces;
+    X_dst[4] = (- (drag_coeff) * ((drag_coeff_v * velocity * vy) - ((magnus_coeff * velocity * vx) / (sqrt_vx_vy)))) * use_extra_forces;
+    X_dst[5] = - gravity + (- (drag_coeff) * (drag_coeff_v * velocity * vz)) * use_extra_forces;
 }
 
-__global__ void calculate(unsigned long seed, curandState *state, double* results, int result_size,
-    double velocity, double timestep, double gravity, double drag_coeff,
+__global__ void calculate(unsigned long seed, curandState *state, double* results, int result_size, int use_extra_forces,
+    double velocity, double timestep, double gravity, double theta_center, double theta_std_dev, double phi_center, 
+    double phi_std_dev, int dim_to_stop, double value_to_stop, bool stop_on_lesser, double drag_coeff,
     double drag_coeff_a, double drag_coeff_b, double drag_coeff_vc, double drag_coeff_vs,
     double object_radius, double object_angular_velocity, double proportionality_constant) {
 
@@ -61,8 +62,8 @@ __global__ void calculate(unsigned long seed, curandState *state, double* result
     curand_init(seed, id, 0, &state[id]);
 
     //Usar a mesma Seed pros dois pode corromper nossas amostras?
-    double phi = (curand_normal(&state[id]) * 5 + 10) * (PI / 180.0);
-    double theta = (curand_normal(&state[id]) * 3 + 15) * (PI / 180.0);
+    double theta = (curand_normal(&state[id]) * theta_std_dev + theta_center) * (PI / 180.0);
+    double phi = (curand_normal(&state[id]) * phi_std_dev + phi_center) * (PI / 180.0);
 
     double X[6];
     double X_prime[6];
@@ -83,7 +84,7 @@ __global__ void calculate(unsigned long seed, curandState *state, double* result
 
     for (int i = 0; i < 1000000; i++) {
         //X' = (vx, vy, vz, dvx, dvy, dvz)
-        differentiate_X(X, X_prime, drag_coeff, drag_coeff_a, drag_coeff_b, drag_coeff_vc, drag_coeff_vs, magnus_coeff, gravity);
+        differentiate_X(X, X_prime, drag_coeff, drag_coeff_a, drag_coeff_b, drag_coeff_vc, drag_coeff_vs, magnus_coeff, gravity, use_extra_forces);
 
         //Xe(n+1) = X(n) + Δt*X'(n)
         X_1_E[0] = X[0] + (timestep * X_prime[0]);
@@ -94,7 +95,7 @@ __global__ void calculate(unsigned long seed, curandState *state, double* result
         X_1_E[5] = X[5] + (timestep * X_prime[5]);
 
         //X'e(n+1) armazenado em Xe(n+1)
-        differentiate_X(X_1_E, X_1_E, drag_coeff, drag_coeff_a, drag_coeff_b, drag_coeff_vc, drag_coeff_vs, magnus_coeff, gravity);
+        differentiate_X(X_1_E, X_1_E, drag_coeff, drag_coeff_a, drag_coeff_b, drag_coeff_vc, drag_coeff_vs, magnus_coeff, gravity, use_extra_forces);
 
         //X(n+1) = X + (Δt/2)*(X'(n) + X'e(n+1))
         X[0] += (timestep * ((X_prime[0] + X_1_E[0]) / 2.0));
@@ -104,11 +105,11 @@ __global__ void calculate(unsigned long seed, curandState *state, double* result
         X[4] += (timestep * ((X_prime[4] + X_1_E[4]) / 2.0));
         X[5] += (timestep * ((X_prime[5] + X_1_E[5]) / 2.0));
 
-        if (X[1] > 20.0) {
+        if ((((X[dim_to_stop] - value_to_stop) < 0) && stop_on_lesser) || (((X[dim_to_stop] - value_to_stop) > 0) && !stop_on_lesser)) {
             //=== Interpolando resultados
-            double end_value = X[1];
-            double previous_value = X[1] - (timestep * ((X_prime[1] + X_1_E[1]) / 2.0));
-            double proportion = 1 - (end_value - 20) / (end_value - previous_value);
+            double end_value = X[dim_to_stop];
+            double previous_value = X[dim_to_stop] - (timestep * ((X_prime[dim_to_stop] + X_1_E[dim_to_stop]) / 2.0));
+            double proportion = 1 - (end_value - value_to_stop) / (end_value - previous_value);
 
             results[id * result_size + 0] = X[0] + ((timestep * ((X_prime[0] + X_1_E[0]) / 2.0))) * (proportion - 1);
             results[id * result_size + 1] = X[1] + ((timestep * ((X_prime[1] + X_1_E[1]) / 2.0))) * (proportion - 1);
@@ -127,9 +128,10 @@ __global__ void calculate(unsigned long seed, curandState *state, double* result
 }
 
 int main(int argc, char** argv) {
-
     if (argc < 5) {
-        printf("Usage: <file> <n_blocos> <n_threads> <timestep> <verbose? [0 | 1]>\n");
+        printf("Usage:\n  <file> <n_blocos> <n_threads> <timestep> <verbose? [0 | 1]>\n");
+        printf("Optional:\n  <velocity> <theta> <theta std dev> <phi> <phi std dev> <dim to stop [0 | 1 | 2]>");
+        printf("<value to stop> <stop on lesser or greater? [lesser 0 | greater 1]> <use extra forces? [0 | 1]>\n");
         printf("Aborting.\n");
         exit(0);
     }
@@ -138,6 +140,15 @@ int main(int argc, char** argv) {
     int n_threads = atoi(argv[2]);
     double timestep = atof(argv[3]);
     bool verbose = atoi(argv[4]);
+    double initial_velocity = (argc > 5) ? atof(argv[5]) : 25.0;
+    double theta = (argc > 6) ? atof(argv[6]) : 15;
+    double theta_std_dev = (argc > 7) ? atof(argv[7]) : 3;
+    double phi = (argc > 8) ? atof(argv[8]) : 10;
+    double phi_std_dev = (argc > 9) ? atof(argv[9]) : 3;
+    int dim_to_stop = (argc > 10) ? atoi(argv[10]) : 1;
+    double value_to_stop = (argc > 11) ? atoi(argv[11]) : 20;
+    bool stop_on_lesser = (argc > 12) ? atoi(argv[12]) : false;
+    int use_extra_forces = (argc > 13) ? atoi(argv[13]) : 1;
 
     int result_size = 7;
     int n_bytes = sizeof(double) * n_threads * n_blocos * result_size;
@@ -151,7 +162,6 @@ int main(int argc, char** argv) {
     cudaEvent_t start, stop;
 
     //Initialization
-    double initial_velocity = 25.0;
     double gravity = 9.81;
 
     double drag_coeff;
@@ -177,8 +187,9 @@ int main(int argc, char** argv) {
     CUDA_SAFE_CALL(cudaEventCreate(&start));
     CUDA_SAFE_CALL(cudaEventCreate(&stop));
     CUDA_SAFE_CALL(cudaEventRecord(start));
-    calculate<<<n_blocos, n_threads>>>(time(NULL), devStates, d_results, result_size, initial_velocity, 
-        timestep, gravity, drag_coeff, drag_coeff_a, drag_coeff_b, drag_coeff_vc, drag_coeff_vs,
+    calculate<<<n_blocos, n_threads>>>(time(NULL), devStates, d_results, result_size, use_extra_forces, 
+        initial_velocity, timestep, gravity, theta, theta_std_dev, phi, phi_std_dev, dim_to_stop, value_to_stop, stop_on_lesser,
+        drag_coeff, drag_coeff_a, drag_coeff_b, drag_coeff_vc, drag_coeff_vs, 
         object_radius, object_angular_velocity, proportionality_constant);
     CUDA_SAFE_CALL(cudaGetLastError());
     CUDA_SAFE_CALL(cudaEventRecord(stop));
