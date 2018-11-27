@@ -307,24 +307,24 @@ int main(int argc, char** argv) {
     for (int i = 0; i < n_blocos; i++) {
         for (int j = 0; j < n_threads; j++) {
             if (verbose) {
-                printf("RESULT[%d]: [\n", i * n_blocos + j);
+                printf("RESULT[%d]: [\n", i * n_threads + j);
 
-                printf(" time: %lf,\n", h_results[i * n_blocos * result_size + j * result_size + 6]);
-                printf(" x*: %lf,\n", h_results[i * n_blocos * result_size + j * result_size + 0]);
-                printf(" y*: %lf,\n", h_results[i * n_blocos * result_size + j * result_size + 1]);
-                printf(" z*: %lf,\n", h_results[i * n_blocos * result_size + j * result_size + 2]);
-                printf(" vx*: %lf,\n", h_results[i * n_blocos * result_size + j * result_size + 3]);
-                printf(" vy*: %lf,\n", h_results[i * n_blocos * result_size + j * result_size + 4]);
-                printf(" vz*: %lf,\n", h_results[i * n_blocos * result_size + j * result_size + 5]);
+                printf(" time: %lf,\n", h_results[i * n_threads * result_size + j * result_size + 6]);
+                printf(" x*: %lf,\n", h_results[i * n_threads * result_size + j * result_size + 0]);
+                printf(" y*: %lf,\n", h_results[i * n_threads * result_size + j * result_size + 1]);
+                printf(" z*: %lf,\n", h_results[i * n_threads * result_size + j * result_size + 2]);
+                printf(" vx*: %lf,\n", h_results[i * n_threads * result_size + j * result_size + 3]);
+                printf(" vy*: %lf,\n", h_results[i * n_threads * result_size + j * result_size + 4]);
+                printf(" vz*: %lf,\n", h_results[i * n_threads * result_size + j * result_size + 5]);
             }
 
-            t_acc += h_results[i * n_blocos * result_size + j * result_size + 6];
-            x_acc += h_results[i * n_blocos * result_size + j * result_size + 0];
-            y_acc += h_results[i * n_blocos * result_size + j * result_size + 1];
-            z_acc += h_results[i * n_blocos * result_size + j * result_size + 2];
+            t_acc += h_results[i * n_threads * result_size + j * result_size + 6];
+            x_acc += h_results[i * n_threads * result_size + j * result_size + 0];
+            y_acc += h_results[i * n_threads * result_size + j * result_size + 1];
+            z_acc += h_results[i * n_threads * result_size + j * result_size + 2];
 
-            if (h_results[i * n_blocos * result_size + j * result_size + 2] > 0.0   && h_results[i * n_blocos * result_size + j * result_size + 2] < 2.44 &&
-                h_results[i * n_blocos * result_size + j * result_size + 2] > -3.66 && h_results[i * n_blocos * result_size + j * result_size + 2] < 3.66) {
+            if (h_results[i * n_threads * result_size + j * result_size + 2] > 0.0   && h_results[i * n_threads * result_size + j * result_size + 2] < 2.44 &&
+                h_results[i * n_threads * result_size + j * result_size + 2] > -3.66 && h_results[i * n_threads * result_size + j * result_size + 2] < 3.66) {
                 goals++;
                 if (verbose) printf(" GOAL!\n");
             }
